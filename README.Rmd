@@ -1,0 +1,212 @@
+---
+output: github_document
+always_allow_html: yes
+---
+
+<!-- README.md is generated from README.Rmd. Please edit that file -->
+
+```{r, echo = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.path = "tools/readme/README-"
+)
+```
+
+# `ghql`
+
+Using a quick query language to pull multiple api requests at once.
+
+  * [installation](#install-ghql)
+  * [tidy function](#tidy-issues)
+  * [using with github](#working-with-github)
+
+## Install ghql
+
+```{r install, eval = FALSE}
+
+remotes::install_github("ropensci/ghql")
+
+```
+
+```{r}
+library(magrittr)
+```
+
+## Query Objects
+
+open a new query object
+
+```{r remedy001}
+
+qry <- ghql::Query$new()
+
+```
+
+define the grapql query
+
+```{r remedy002}
+
+qry$query('user_states','{
+          viewer {
+    repositories(privacy:PUBLIC,first: 30) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      edges {
+        node {
+          name
+          pullRequests(states:[OPEN],last: 20, orderBy: {field: CREATED_AT, direction: DESC}) {
+      		edges {
+            node {
+              title
+              number
+              state
+              createdAt
+              author{
+                login
+              }
+            	}
+      			}
+    			}
+          issues(states:[OPEN],last: 20, orderBy: {field: CREATED_AT, direction: DESC}) {
+      		edges {
+            node {
+              title
+              number
+              state
+              createdAt
+              author{
+                login
+              }
+            	}
+      			}
+    			}
+        }
+      }
+    }
+  }
+}')
+
+```
+
+## tidy issues
+
+```{r remedy003}
+
+tidy_issues <- function(x){
+  
+  x1 <- jsonlite::fromJSON(x)
+  
+  edges <- purrr::transpose(x1$data$viewer$repositories$edges)%>%
+    dplyr::as_tibble()
+  
+  open_edges <- edges%>%
+    dplyr::select(name,pullRequests)%>%
+    tidyr::unnest()%>%
+    dplyr::rename(open_pullRequests = edges)%>%
+    dplyr::left_join(
+      edges%>%
+        dplyr::select(name,issues)%>%
+        tidyr::unnest()%>%
+        dplyr::rename(open_issues = edges),
+      by='name'
+    )
+ 
+  PR <- purrr::transpose(open_edges$open_pullRequests)%>%
+    purrr::flatten()%>%
+    purrr::set_names(open_edges$name)%>%
+    purrr::discard(.p = is.null)%>%
+    purrr::map_df(.f=function(x) {
+      x$author <- purrr::flatten_chr(x$author)
+      x},.id = 'repository')%>%
+    dplyr::mutate(type = 'pull_request')%>%
+    dplyr::select(-state)
+  
+  ISSUES <- purrr::transpose(open_edges$open_issues)%>%
+    purrr::flatten()%>%
+    purrr::set_names(open_edges$name)%>%
+    purrr::discard(.p = is.null)%>%
+    purrr::map_df(.f=function(x) {
+      x$author <- purrr::flatten_chr(x$author)
+      x},.id = 'repository')%>%
+    dplyr::mutate(type = 'issue')%>%
+    dplyr::select(-state)
+
+  output <- dplyr::bind_rows(PR,ISSUES)
+  
+  output$createdAt = as.POSIXct(output$createdAt, "UTC", "%Y-%m-%dT%H:%M:%S")
+  output$days_passed = as.numeric(difftime(Sys.time(),output$createdAt,units = 'days'))
+  
+  output
+  
+}
+
+```
+
+## Working with Github
+
+load gh client with GITHUB_PAT
+
+```{r remedy004}
+  
+    cli_gh <- ghql::GraphqlClient$new(
+      url = "https://api.github.com/graphql",
+      headers = httr::add_headers(Authorization = sprintf("Bearer %s", Sys.getenv("GITHUB_PAT")))
+    )
+
+```
+
+load the schema
+
+```{r remedy005}
+  
+cli_gh$load_schema()
+
+```
+
+execute the graphql query
+
+```{r remedy006}
+  
+x_gh <- cli_gh$exec(qry$queries$user_states)       
+
+```
+
+tidy up
+
+```{r remedy007}
+  
+output <- tidy_issues(x_gh)
+
+```
+
+```{r}
+output%>%
+  dplyr::glimpse()
+```
+
+<details>
+<summary> <span title='Click to Expand'> Pull Request Table </span> </summary> 
+ 
+```{r}
+output%>%
+  dplyr::filter(type=='pull_request')%>%
+  knitr::kable()
+
+```
+
+</details>
+ 
+<details>
+<summary> <span title='Click to Expand'> Issues Table </span> </summary>
+ 
+```{r}
+output%>%
+  dplyr::filter(type=='issue')%>%
+  knitr::kable()
+
+```
+
+</details>
