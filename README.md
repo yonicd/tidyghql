@@ -1,7 +1,7 @@
 
 <!-- README.md is generated from README.Rmd. Please edit that file -->
 
-# `ghql`
+# `tidyghql`
 
 Using a quick query language to pull multiple api requests at once.
 
